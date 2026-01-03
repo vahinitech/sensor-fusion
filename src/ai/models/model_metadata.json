@@ -1,0 +1,24 @@
+{
+  "model_type": "CNN+BiLSTM (Fast Training)",
+  "training_mode": "Fast (optimized for speed)",
+  "purpose": "Handwritten uppercase letter recognition (A-Z)",
+  "input_shape": [
+    512,
+    13
+  ],
+  "num_classes": 26,
+  "training_samples": 10387,
+  "epochs": 15,
+  "batch_size": 128,
+  "workers": 9,
+  "optimizations": [
+    "Larger batch size (128 vs 64)",
+    "Fewer epochs with early stopping (15 vs 30)",
+    "Mixed precision (if available)",
+    "Maximum CPU utilization",
+    "XLA compilation enabled"
+  ],
+  "training_time_minutes": 6.513369833333333,
+  "training_date": "2026-01-04T01:27:35.282852",
+  "model_location": "src/ai/models/character_model.h5"
+}
