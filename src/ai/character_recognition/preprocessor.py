@@ -16,19 +16,19 @@ class SensorDataPreprocessor:
         'gyro': 3,
         'rear_accel': 3,
         'magnet': 3,
-        'force': 1,
+        'force': 3,  # FIXED: Force has X, Y, Z values (not just 1)
     }
     
     CHANNEL_ORDER = ['front_accel', 'gyro', 'rear_accel', 'magnet', 'force']
-    TOTAL_CHANNELS = sum(SENSOR_CHANNELS.values())  # 13
+    TOTAL_CHANNELS = sum(SENSOR_CHANNELS.values())  # 16 (was 13 before force fix)
     
-    def __init__(self, max_timesteps=512, sampling_rate=104):
+    def __init__(self, max_timesteps=512, sampling_rate=208):
         """
         Initialize preprocessor
         
         Args:
-            max_timesteps: Maximum sequence length (at 104Hz = ~5 seconds)
-            sampling_rate: Sensor sampling rate in Hz
+            max_timesteps: Maximum sequence length (at 208Hz = ~2.5 seconds)
+            sampling_rate: Sensor sampling rate in Hz (updated to 208Hz)
         """
         self.max_timesteps = max_timesteps
         self.sampling_rate = sampling_rate
@@ -118,19 +118,19 @@ class SensorDataPreprocessor:
             gyro: Gyroscope (T, 3)
             rear_accel: Rear accelerometer (T, 3)
             magnet: Magnetometer (T, 3)
-            force: Force sensor (T, 1)
+            force: Force sensor (T, 3) - X, Y, Z from firmware
         
         Returns:
-            Arranged data (T, 13)
+            Arranged data (T, 16)
         """
         T = top_accel.shape[0]
-        arranged = np.zeros((T, 13), dtype=np.float32)
+        arranged = np.zeros((T, 16), dtype=np.float32)
         
         arranged[:, 0:3] = top_accel
         arranged[:, 3:6] = gyro
         arranged[:, 6:9] = rear_accel
         arranged[:, 9:12] = magnet
-        arranged[:, 12:13] = force
+        arranged[:, 12:16] = force
         
         return arranged
     
@@ -142,7 +142,7 @@ class SensorDataPreprocessor:
             sensor_buffers: Dictionary with sensor data deques/lists
         
         Returns:
-            Processed array (T, 13)
+            Processed array (T, 16)
         """
         # Extract data
         top_accel = np.column_stack([
@@ -169,7 +169,12 @@ class SensorDataPreprocessor:
             sensor_buffers.get('mag_z', []),
         ])
         
-        force = np.array(sensor_buffers.get('force_x', [])).reshape(-1, 1)
+        # FIXED: Force now has 3 channels (X, Y, Z) from firmware
+        force = np.column_stack([
+            sensor_buffers.get('force_x', []),
+            sensor_buffers.get('force_y', []),
+            sensor_buffers.get('force_z', []),
+        ])
         
         # Arrange channels
         data = self.arrange_channels(top_accel, gyro, rear_accel, magnet, force)

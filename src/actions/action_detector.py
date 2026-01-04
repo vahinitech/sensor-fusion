@@ -25,14 +25,14 @@ class ActionDetector:
         self.gyro_buffer = deque(maxlen=buffer_size)
         
         # Thresholds for action detection
-        self.accel_motion_threshold = 800      # m/s² - movement threshold
-        self.gyro_motion_threshold = 300       # °/s - rotation threshold
+        self.accel_motion_threshold = 500      # m/s² - movement threshold (lowered from 800)
+        self.gyro_motion_threshold = 150       # °/s - rotation threshold (lowered from 300)
         self.tilt_threshold = 30               # degrees - significant tilt (raised)
         self.drift_threshold = 30              # degrees - gyro drift (raised)
         self.pen_up_threshold = 11000          # m/s² - pen lifted (high accel)
         self.pen_down_threshold = 2000         # m/s² - pen touching surface (very low accel)
         self.firmly_hold_threshold = 100       # Very low motion for firm hold
-        self.force_threshold = 1500            # Force sensor value indicating grip
+        self.force_threshold = 1000            # Force sensor value indicating grip (lowered from 1500)
         
         # State tracking
         self.current_action = "idle"
@@ -44,7 +44,7 @@ class ActionDetector:
         # For drift calculation (integrate gyro)
         self.last_gyro = [0, 0, 0]
         self.integrated_gyro = [0, 0, 0]
-        self.dt = 1 / 104.0  # 104 Hz sampling
+        self.dt = 1 / 208.0  # 208 Hz sampling rate
         
         # Force sensor buffer
         self.force_buffer = deque(maxlen=buffer_size)
@@ -165,24 +165,64 @@ class ActionDetector:
         gyro_score = min(100, (gyro_motion / self.gyro_motion_threshold) * 50)
         motion_score = accel_score + gyro_score
         
+        # Debug: Show motion scores every 50 updates to diagnose why writing isn't triggering
+        if not hasattr(self, '_debug_counter'):
+            self._debug_counter = 0
+        self._debug_counter += 1
+        
+        if self._debug_counter % 50 == 0 and has_force_data:
+            print(f"🔍 Motion Scores | accel={accel_score:.1f} gyro={gyro_score:.1f} total={motion_score:.1f} | force={force_magnitude:.0f} | accel_mag={accel_magnitude:.0f}")
+        
+        # Debug: Show action transitions
+        if not hasattr(self, '_prev_action'):
+            self._prev_action = None
+        
+        # Pre-evaluate what action will be chosen
+        if accel_magnitude > self.pen_up_threshold and motion_score > 30:
+            potential_action = "pen_up"
+        elif (motion_score > 50 and gyro_score > 10) or (has_force_data and force_magnitude > 1000 and motion_score > 5):
+            potential_action = "writing"
+        elif has_force_data and force_magnitude > 1200 and motion_score < 40 and accel_magnitude > 2500:
+            potential_action = "pen_down"
+        elif has_force_data and force_magnitude > self.force_threshold and accel_magnitude >= 3000 and motion_score < 50 and motion_score > 5:
+            potential_action = "firmly_held"
+        elif motion_score < 20 and accel_magnitude > 1000:
+            potential_action = "thinking"
+        elif self.tilt_angle > self.tilt_threshold and accel_magnitude > 1000:
+            potential_action = "tilted"
+        elif self.drift_rate > self.drift_threshold and accel_magnitude > 1000:
+            potential_action = "drifting"
+        else:
+            potential_action = "idle"
+        
+        if potential_action != self._prev_action:
+            print(f"   [ACTION TRANSITION] {self._prev_action} → {potential_action} (motion={motion_score:.0f}, force={force_magnitude:.0f})")
+            self._prev_action = potential_action
+        elif potential_action == "writing" and self._debug_counter % 100 == 0:
+            # Show why still in writing every 100 samples
+            print(f"   📝 Still WRITING: motion={motion_score:.0f} force={force_magnitude:.0f} (need motion<30 to exit to firmly_held)")
+        
         # Decision logic - check in priority order
         # 1. Check for extreme acceleration (pen up - only if very high AND motion detected)
         if accel_magnitude > self.pen_up_threshold and motion_score > 30:
             self.current_action = "pen_up"
             self.action_confidence = min(100, (accel_magnitude / 15000) * 100)
-        # 2. Pen down on surface - LOW acceleration and very low motion
-        elif accel_magnitude < 4000 and motion_score < 15 and accel_magnitude > 500:
+        # 2. WRITING with force applied - active motion OR force sensor + accel
+        elif (motion_score > 50 and gyro_score > 10) or (has_force_data and force_magnitude > 1000 and motion_score > 30):
+            self.current_action = "writing"
+            self.action_confidence = min(100, motion_score if motion_score > 50 else (force_magnitude / 2500) * 100)
+            if self._debug_counter % 20 == 0:
+                print(f"✍️ WRITING! Condition: motion={motion_score:.0f}>{50} gyro={gyro_score:.0f}>{10} OR (force={force_magnitude:.0f}>{1000} AND motion={motion_score:.0f}>{30})")
+        # 3. Pen down with force - force applied + minimal motion
+        elif has_force_data and force_magnitude > 1200 and motion_score < 40 and accel_magnitude > 2500:
             self.current_action = "pen_down"
-            self.action_confidence = min(100, 100 - (accel_magnitude / 4000) * 100)
-        # 3. Firmly held - based on FORCE SENSOR (high force + normal accel + low motion)
-        # Only if accel is significant and there's actual force detected
+            self.action_confidence = min(100, (force_magnitude / 2500) * 100)
+        # 4. Firmly held - based on FORCE SENSOR (high force + normal accel + low motion)
         elif has_force_data and force_magnitude > self.force_threshold and accel_magnitude >= 3000 and motion_score < 50 and motion_score > 5:
             self.current_action = "firmly_held"
             self.action_confidence = min(100, (force_magnitude / 2500) * 100)
-        # 4. Writing - active motion with rotation
-        elif motion_score > 70 and gyro_score > 20:
-            self.current_action = "writing"
-            self.action_confidence = min(100, motion_score)
+            if self._debug_counter % 30 == 0:
+                print(f"🤚 FIRMLY_HELD (blocking WRITING!) | force={force_magnitude:.0f}>{self.force_threshold} accel={accel_magnitude:.0f}>=3000 motion={motion_score:.0f} (5-50 range)")
         # 5. Thinking - low motion, pen steady, but with some minimal sensor activity
         elif motion_score < 20 and accel_magnitude > 1000:
             self.current_action = "thinking"

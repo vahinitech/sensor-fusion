@@ -90,9 +90,9 @@ X_train_flat = np.nan_to_num(X_train_flat, nan=0.0, posinf=0.0, neginf=0.0)
 X_test_flat  = np.nan_to_num(X_test_flat,  nan=0.0, posinf=0.0, neginf=0.0)
 
 # ============================================================
-# 5. RESHAPE TO (T, C) WITH 13 CHANNELS
+# 5. RESHAPE TO (T, C) WITH 16 CHANNELS (UPDATED: force now has X,Y,Z)
 # ============================================================
-n_channels = 13
+n_channels = 16  # UPDATED: Was 13, now 16 because force has 3 channels (X, Y, Z)
 def reshape_to_seq(X_flat):
     total_len = X_flat.shape[1]
     timesteps = total_len // n_channels
@@ -109,14 +109,14 @@ print("X_train_seq:", X_train_seq.shape)
 print("X_test_seq :", X_test_seq.shape)
 
 # ============================================================
-# 6. SENSOR SLICING & COMBINATIONS
+# 6. SENSOR SLICING & COMBINATIONS (UPDATED: force now 3 channels)
 # ============================================================
 def split_sensors_3d(X):
     front_acc = X[:, :, 0:3]
     gyro      = X[:, :, 3:6]
     rear_acc  = X[:, :, 6:9]
     magnet    = X[:, :, 9:12]
-    force     = X[:, :, 12:13]
+    force     = X[:, :, 12:16]  # UPDATED: Was 12:13, now 12:16 (3 channels: X, Y, Z)
     return front_acc, gyro, rear_acc, magnet, force
 
 def combine_seq(*xs):

@@ -33,7 +33,7 @@ class SensorDashboardGUI:
     def __init__(self, root):
         """Initialize the GUI application"""
         self.root = root
-        self.root.title("Sensor Fusion Dashboard (104Hz)")
+        self.root.title("Sensor Fusion Dashboard (208Hz)")
         self.root.geometry("1600x900")
         
         # Application state
@@ -238,7 +238,7 @@ class SensorDashboardGUI:
         
         # Create figure for plots
         self.fig = Figure(figsize=(11, 8), dpi=100)
-        self.fig.suptitle('Multi-Sensor Real-Time Dashboard (104Hz)', fontsize=14, fontweight='bold')
+        self.fig.suptitle('Multi-Sensor Real-Time Dashboard (208Hz)', fontsize=14, fontweight='bold')
         
         # Create grid layout
         gs = GridSpec(4, 3, figure=self.fig, hspace=0.35, wspace=0.3)
@@ -248,8 +248,8 @@ class SensorDashboardGUI:
         self.ax1_gyro = self.fig.add_subplot(gs[0, 1])
         self.ax1_mag = self.fig.add_subplot(gs[0, 2])
         
-        self._setup_accel_plot(self.ax1_accel, "TOP IMU: Accelerometer (LSM6DSO)")
-        self._setup_gyro_plot(self.ax1_gyro, "TOP IMU: Gyroscope (LSM6DSO)")
+        self._setup_accel_plot(self.ax1_accel, "TOP IMU: Accelerometer")
+        self._setup_gyro_plot(self.ax1_gyro, "TOP IMU: Gyroscope")
         self._setup_mag_plot(self.ax1_mag, "TOP IMU: Accel Magnitude")
         
         # ROW 2: Magnetometer
@@ -261,15 +261,15 @@ class SensorDashboardGUI:
         self.ax3_gyro = self.fig.add_subplot(gs[2, 1])
         self.ax3_mag = self.fig.add_subplot(gs[2, 2])
         
-        self._setup_accel_plot(self.ax3_accel, "REAR IMU: Accelerometer (LSM6DSM)")
-        self._setup_gyro_plot(self.ax3_gyro, "REAR IMU: Gyroscope (LSM6DSM)")
+        self._setup_accel_plot(self.ax3_accel, "REAR IMU: Accelerometer")
+        self._setup_gyro_plot(self.ax3_gyro, "REAR IMU: Gyroscope")
         self._setup_mag_plot(self.ax3_mag, "REAR IMU: Accel Magnitude")
         
         # ROW 4: Force Sensor & Stats
         self.ax4_force = self.fig.add_subplot(gs[3, 0:2])
         self.ax4_stats = self.fig.add_subplot(gs[3, 2])
         
-        self._setup_force_plot(self.ax4_force, "FORCE SENSOR: 3-Axis Force (HLP A04)")
+        self._setup_force_plot(self.ax4_force, "FORCE SENSOR: 3-Axis Force")
         self.ax4_stats.axis('off')
         self.stats_text = self.ax4_stats.text(0.05, 0.95, '', transform=self.ax4_stats.transAxes,
                                              verticalalignment='top', fontfamily='monospace',
@@ -321,7 +321,7 @@ class SensorDashboardGUI:
         ax.set_xlabel('Sample Index', fontsize=9)
         ax.set_ylabel('Force (ADC)', fontsize=9)
         ax.grid(True, alpha=0.3)
-        ax.set_ylim(0, 4096)
+        # Don't set fixed ylim - will auto-scale in update_plot based on actual data
     
     def _create_line_objects(self):
         """Create line objects for all plots"""
@@ -454,7 +454,13 @@ class SensorDashboardGUI:
         if not parsed:
             return
         
+        # Debug: Show force sensor values every 100 samples to verify data flow
+        if self.sample_count % 100 == 0:
+            print(f"📡 Raw data | t={parsed['timestamp']} | force_x={parsed['force_x']:.0f} | force_y={parsed['force_y']:.0f} | force_z={parsed['force_z']:.0f}")
+        
         # Apply sensor fusion filters if enabled
+        # NOTE: Kalman filters applied ONLY to IMU sensors (accelerometer & gyroscope)
+        # Magnetometer and Force sensor data is NOT filtered - used raw
         if self.apply_filter:
             # Filter top IMU (accelerometer and gyroscope)
             parsed['top_accel_x'] = self.filter_manager.filter_accel({'x': parsed['top_accel_x'], 'y': 0, 'z': 0})['x']
@@ -497,35 +503,56 @@ class SensorDashboardGUI:
             self.char_recognition.recognized_char = None
             self.char_recognition.recognized_confidence = 0.0
             self.char_recognition.start_writing()
-            print("✏️  Started collecting character data (pen down/writing detected)")
+            print(f"✏️  Started collecting character data (pen down/writing detected)")
+            print(f"    Action transitioned: {self.prev_pen_action} → {current_action}")
         
         # Stop writing when pen lifts up OR goes to any non-writing state
         elif self.prev_pen_action in ['pen_down', 'writing'] and current_action not in ['pen_down', 'writing']:
+            sample_count = len(self.char_recognition.writing_buffer['top_accel_x'])
+            duration = sample_count / 208.0
             print(f"⏸️  Pen stopped writing (transitioned to: {current_action})")
+            print(f"📊 Collected {sample_count} samples (~{duration:.2f}s of writing)")
             self.char_recognition.stop_writing()
-            print(f"⏳ Waiting for {self.char_recognition.pause_threshold:.1f}s pause to recognize character...")
+            print(f"⏳ Waiting for {self.char_recognition.pause_threshold:.1f}s pause to trigger recognition...")
         
         # Check if pause is complete - trigger recognition
-        if self.char_recognition.check_pause_complete():
-            print(f"✅ Pause detected! Recognizing character...")
+        pause_result = self.char_recognition.check_pause_complete()
+        if pause_result == 'complete':
+            print(f"\n{'='*60}")
+            print(f"✅ PAUSE COMPLETE - RECOGNIZING CHARACTER")
+            print(f"{'='*60}")
             recognized_char, confidence = self.char_recognition.end_writing()
             if recognized_char:
-                print(f"🎯 Recognized character: {recognized_char} (confidence: {confidence:.1%})")
+                print(f"\n🎯 ✨ RECOGNIZED: '{recognized_char}' (confidence: {confidence:.1%}) ✨")
+                print(f"{'='*60}\n")
             else:
                 if self.char_recognition.model:
-                    print(f"⚠️  Low confidence recognition (below 80% threshold, got {confidence:.1%})")
+                    print(f"\n⚠️  Character not recognized (confidence {confidence:.1%} < 80% threshold)")
+                    print(f"{'='*60}\n")
                 else:
-                    print("ℹ️  Collected character data, but no model loaded to recognize")
+                    print(f"\nℹ️  No model loaded to recognize")
+                    print(f"{'='*60}\n")
+        elif pause_result == 'waiting' and self.char_recognition.waiting_for_pause:
+            # Pause countdown is handled in check_pause_complete() now, so just pass here
+            pass
         
         self.prev_pen_action = current_action
         
         # Update character recognition with sensor data
         if self.char_recognition.is_writing:
             self.char_recognition.add_sensor_data(parsed)
+            # Log sample count every 20 samples
+            sample_count = len(self.char_recognition.writing_buffer['top_accel_x'])
+            if sample_count > 0 and sample_count % 20 == 0:
+                print(f"📊 Collecting... {sample_count} samples (~{sample_count/208:.2f}s @ 208Hz)")
         
         # Add to buffers
         self.buffers.add_sample(self.sample_count, parsed)
         self.sample_count += 1
+        
+        # Debug: Print force sensor values every 50 samples to verify they're being received
+        if self.sample_count % 50 == 0:
+            print(f"🔧 Force sensor values: X={parsed['force_x']:.0f}, Y={parsed['force_y']:.0f}, Z={parsed['force_z']:.0f}")
     
     def _update_connection_ui(self, connected):
         """Update UI based on connection state"""
@@ -616,6 +643,16 @@ class SensorDashboardGUI:
             self.line_force_y.set_data(x_indices, data['force_y'])
             self.line_force_z.set_data(x_indices, data['force_z'])
             self.ax4_force.set_xlim(x_min, n_samples)
+            
+            # Auto-scale force sensor Y axis based on actual data ranges
+            if len(data['force_x']) > 0 or len(data['force_y']) > 0 or len(data['force_z']) > 0:
+                all_force_values = data['force_x'] + data['force_y'] + data['force_z']
+                if all_force_values:
+                    force_min = min(all_force_values)
+                    force_max = max(all_force_values)
+                    margin = (force_max - force_min) * 0.1 if (force_max - force_min) > 0 else 100
+                    self.ax4_force.set_ylim(force_min - margin, force_max + margin)
+                    self.ax4_force.set_autoscale_on(False)
             
             # Update AI Character Recognition display
             if self.char_recognition.model:

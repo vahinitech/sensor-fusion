@@ -43,7 +43,8 @@ data/test_data.csv
 data/**/*.npy           # Exclude NPY training files
 data/**/X_*.npy         # Exclude training data
 data/**/y_*.npy         # Exclude labels
-data/onhw-chars_*/      # Exclude entire training dataset
+data/onhw-chars_*/      # Exclude entire OnHW training dataset (large ~2GB)
+data/onhw-chars_*/**    # Exclude all OnHW dataset subdirectories
 data/*.zip              # Exclude zip archives
 .env
 *.log

@@ -28,7 +28,7 @@ class CharacterRecognitionIntegration:
         self.lock = threading.Lock()
         
         # Sampling rate and timing
-        self.target_sampling_rate = 104  # Hz - same as training data
+        self.target_sampling_rate = 208  # Hz - IMU output rate
         self.sample_interval = 1.0 / self.target_sampling_rate  # ~9.6 ms
         self.last_sample_time = None
         
@@ -52,6 +52,8 @@ class CharacterRecognitionIntegration:
             'mag_y': deque(maxlen=buffer_size),
             'mag_z': deque(maxlen=buffer_size),
             'force_x': deque(maxlen=buffer_size),
+            'force_y': deque(maxlen=buffer_size),
+            'force_z': deque(maxlen=buffer_size),
         }
         
         # Character history
@@ -86,7 +88,7 @@ class CharacterRecognitionIntegration:
             # Load preprocessor with same config
             self.preprocessor = SensorDataPreprocessor(
                 max_timesteps=512,
-                sampling_rate=104
+                sampling_rate=208
             )
             
             # Load model with proper initialization
@@ -106,35 +108,29 @@ class CharacterRecognitionIntegration:
             return False
     
     def add_sensor_data(self, sensor_dict: Dict):
-        """
-        Add new sensor data to writing buffer (only at 104Hz rate)
+        """  
+        Add new sensor data to writing buffer
         
         Args:
-            sensor_dict: Dictionary with sensor values and 'timestamp' key
+            sensor_dict: Dictionary with sensor values
         """
         if not self.is_writing:
             return
         
-        import time
-        
         with self.lock:
-            current_time = time.time()
+            # Accept ALL samples - no resampling filter
+            # Firmware controls the rate, we just collect what we receive
+            for key in self.writing_buffer:
+                if key in sensor_dict:
+                    self.writing_buffer[key].append(sensor_dict[key])
             
-            # Initialize timing on first sample
-            if self.last_sample_time is None:
-                self.last_sample_time = current_time
-                actual_interval = 0
-            else:
-                actual_interval = current_time - self.last_sample_time
-            
-            # Only add sample if enough time has passed (104Hz ≈ 9.6ms per sample)
-            # Allow some tolerance: 8-11ms
-            if actual_interval >= (self.sample_interval * 0.8):  # At least 80% of expected interval
-                for key in self.writing_buffer:
-                    if key in sensor_dict:
-                        self.writing_buffer[key].append(sensor_dict[key])
-                
-                self.last_sample_time = current_time
+            # Debug: Log first few samples
+            buffer_len = len(self.writing_buffer['top_accel_x'])
+            if buffer_len <= 5:
+                timestamp = sensor_dict.get('timestamp', 0)
+                accel_x = sensor_dict.get('top_accel_x', 0)
+                force_x = sensor_dict.get('force_x', 0)
+                print(f"  📥 Sample {buffer_len} | t={timestamp} | accel_x={accel_x:.0f} | force_x={force_x:.0f}")
     
     def start_writing(self):
         """Signal that pen is down and writing has started"""
@@ -155,34 +151,48 @@ class CharacterRecognitionIntegration:
             self.is_writing = False
             self.waiting_for_pause = True
             self.writing_stopped_time = None  # Will be set when pause begins
+            
+            # Debug: Show final sample count
+            buffer_len = len(self.writing_buffer['top_accel_x'])
+            print(f"  ⏸️ Writing stopped. Buffer contains {buffer_len} samples (preserved for recognition)")
+            print(f"  ⏳ Waiting for pause detection... (need 0.5s with NO MOTION to trigger)")
     
-    def check_pause_complete(self) -> bool:
+    def check_pause_complete(self) -> str:
         """
         Check if sufficient pause has occurred to trigger recognition
         
         Returns:
-            True if pause is complete and recognition should trigger
+            'complete' if pause is complete and recognition should trigger
+            'waiting' if still waiting for pause to complete
+            'idle' if not waiting for pause
         """
         import time
         
         with self.lock:
             if not self.waiting_for_pause:
-                return False
+                return 'idle'
             
             if self.writing_stopped_time is None:
                 # First call after stopping - record the time
                 self.writing_stopped_time = time.time()
-                return False
+                print(f"🕐 Pause detection started at {self.writing_stopped_time}")
+                return 'waiting'
             
             # Check if pause duration exceeded threshold
             pause_duration = time.time() - self.writing_stopped_time
             
+            # Debug: Show every 0.1s of pause
+            if int(pause_duration * 10) % 2 == 0:  # Every ~0.1s
+                buffer_len = len(self.writing_buffer['top_accel_x'])
+                print(f"⏳ Pause: {pause_duration:.2f}s / {self.pause_threshold:.2f}s (buffer: {buffer_len} samples)")
+            
             if pause_duration >= self.pause_threshold:
                 self.waiting_for_pause = False
                 self.writing_stopped_time = None
-                return True
+                print(f"✅ PAUSE THRESHOLD MET! ({pause_duration:.2f}s >= {self.pause_threshold:.2f}s)")
+                return 'complete'
             
-            return False
+            return 'waiting'
     
     def end_writing(self) -> Tuple[Optional[str], float]:
         """
@@ -198,19 +208,22 @@ class CharacterRecognitionIntegration:
                 print("❌ No model loaded!")
                 return None, 0.0
             
-            # Need minimum data
+            # Check if any data was collected
             buffer_len = len(self.writing_buffer['top_accel_x'])
-            if buffer_len < 50:  # Minimum 50 samples (~0.5s at 104Hz)
-                print(f"❌ Insufficient data: only {buffer_len} samples (need 50+)")
+            if buffer_len == 0:
+                print(f"❌ No data collected!")
                 return None, 0.0
+            
+            print(f"\n🔍 Recognition triggered with {buffer_len} samples")
             
             try:
                 print(f"\n{'='*60}")
                 print(f"🔍 CHARACTER RECOGNITION DEBUG")
                 print(f"{'='*60}")
+                print(f"📝 BUFFER PRESERVED DURING PAUSE - ALL WRITING DATA USED")
                 
-                # Convert buffer to numpy array
-                sensor_data = np.zeros((buffer_len, 13), dtype=np.float32)
+                # Convert buffer to numpy array (16 channels: 3+3+3+3+3 with force X,Y,Z)
+                sensor_data = np.zeros((buffer_len, 16), dtype=np.float32)
                 sensor_data[:, 0] = list(self.writing_buffer['top_accel_x'])
                 sensor_data[:, 1] = list(self.writing_buffer['top_accel_y'])
                 sensor_data[:, 2] = list(self.writing_buffer['top_accel_z'])
@@ -224,20 +237,32 @@ class CharacterRecognitionIntegration:
                 sensor_data[:, 10] = list(self.writing_buffer['mag_y'])
                 sensor_data[:, 11] = list(self.writing_buffer['mag_z'])
                 sensor_data[:, 12] = list(self.writing_buffer['force_x'])
+                sensor_data[:, 13] = list(self.writing_buffer['force_y'])
+                sensor_data[:, 14] = list(self.writing_buffer['force_z'])
                 
                 print(f"📊 Raw Data Shape: {sensor_data.shape}")
                 print(f"   Samples collected: {buffer_len}")
-                print(f"   Duration: ~{buffer_len/104:.2f} seconds @ 104Hz")
+                print(f"   Duration: ~{buffer_len/208:.2f} seconds @ 208Hz")
                 print(f"   Data range: [{sensor_data.min():.2f}, {sensor_data.max():.2f}]")
                 print(f"   Data stats: mean={sensor_data.mean():.2f}, std={sensor_data.std():.2f}")
+                
+                # Show force sensor values specifically
+                force_data = sensor_data[:, 12]  # force_x channel
+                print(f"\n   🔧 Force Sensor (force_x):")
+                print(f"      Range: [{force_data.min():.0f}, {force_data.max():.0f}]")
+                print(f"      Mean: {force_data.mean():.0f}, Std: {force_data.std():.2f}")
+                print(f"      First 5 values: {force_data[:5]}")
+                
+                print(f"   ✅ NO SAMPLES DISCARDED - All writing data sent to model")
                 
                 # Preprocess
                 print(f"\n⚙️  Preprocessing...")
                 sensor_data_padded = self.preprocessor.pad_sequence(sensor_data)
                 print(f"   After padding: {sensor_data_padded.shape}")
                 
+                # FIXED: Now using 16 channels (force has X, Y, Z not just 1)
                 sensor_data_normalized = self.preprocessor.normalize_data(
-                    sensor_data_padded.reshape(1, 512, 13)
+                    sensor_data_padded.reshape(1, 512, 16)
                 )
                 print(f"   After normalization: {sensor_data_normalized.shape}")
                 print(f"   Normalized range: [{sensor_data_normalized.min():.4f}, {sensor_data_normalized.max():.4f}]")
@@ -245,8 +270,14 @@ class CharacterRecognitionIntegration:
                 
                 # Predict
                 print(f"\n🤖 Running model prediction...")
-                print(f"   Model type: {type(self.model.model)}")
-                print(f"   Input shape to model: {sensor_data_normalized[0].shape}")
+                print(f"   Model loaded: {self.model is not None}")
+                print(f"   Model.model loaded: {self.model.model is not None if self.model else False}")
+                if self.model and self.model.model:
+                    print(f"   Model type: {type(self.model.model)}")
+                    print(f"   Input shape to model: {sensor_data_normalized[0].shape}")
+                else:
+                    print(f"   ❌ ERROR: Model not properly loaded!")
+                    return None, 0.0
                 
                 # Get raw predictions (before argmax)
                 input_batch = sensor_data_normalized[0:1]  # Keep batch dimension
