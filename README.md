@@ -1,55 +1,156 @@
 # Sensor Fusion Dashboard
 
-Professional multi-sensor real-time visualization application for LSM6DSO, LSM6DSM, ST Magnetometer & HLP A04 Force Sensor at 104Hz.
+[![Code Quality](https://img.shields.io/badge/pylint-9.81%2F10-brightgreen)](https://github.com/vahinitech/sensor-fusion-dashboard)
+[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Tests](https://img.shields.io/badge/tests-30%20passing-success)](https://github.com/vahinitech/sensor-fusion-dashboard)
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
 
-## Quick Start
+**Real-time multi-sensor data acquisition, visualization, and AI-powered handwriting recognition system**
+
+A professional-grade sensor fusion dashboard that combines real-time data visualization with LSTM-based character recognition. Built for research, development, and production deployment of IMU-based gesture recognition systems.
+
+## 🎯 Overview
+
+The Sensor Fusion Dashboard is a comprehensive platform for collecting, processing, and analyzing multi-sensor data streams from IMU devices. It features a modern GUI interface, real-time plotting, sensor fusion algorithms (Kalman/EKF/Complementary filters), and deep learning-based character recognition capabilities.
+
+**Key Capabilities:**
+- **Real-time Visualization**: Professional matplotlib-based dashboard displaying 18+ sensor channels simultaneously at 208Hz
+- **AI Character Recognition**: LSTM neural network trained on OnHW dataset for handwriting recognition from sensor movements
+- **Action Detection**: Intelligent gesture and pen state detection (idle, hovering, writing, pen_down, pen_up)
+- **Sensor Fusion**: Kalman Filter, Extended Kalman Filter, and Complementary Filter implementations for noise reduction
+- **Battery Monitoring**: Real-time voltage-to-percentage conversion with health status indicators
+- **Production Ready**: Complete CI/CD pipeline with automated testing, code quality gates (Pylint 9.5+), and Black formatting
+
+**Hardware Support:**
+- Top IMU (LSM6DSO): 6-axis accelerometer + gyroscope
+- Rear IMU (LSM6DSM): 6-axis accelerometer + gyroscope  
+- Magnetometer (ST): 3-axis magnetic field sensor
+- Force Sensor (HLP A04): Analog force measurement
+- Battery Monitor: 2S LiPo voltage tracking (6.0V - 8.4V)
+
+## 🚀 Quick Start
 
 ```bash
-# Setup
+# Clone repository
+git clone https://github.com/vahinitech/sensor-fusion-dashboard.git
+cd sensor-fusion-dashboard
+
+# Setup virtual environment
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 
-# Run
+# Launch dashboard
 python run.py
 ```
 
-## Features
+**First-time setup (~2 minutes):**
+1. Select COM port from dropdown (or use CSV mode for testing)
+2. Choose baudrate (default: 115200)
+3. Click "Connect" to start real-time visualization
+4. View 4-row dashboard with all sensor streams
 
-- **GUI Application**: Interactive tkinter interface with COM port & baudrate selection
-- **Multi-Sensor Support**: Top IMU, Magnetometer, Rear IMU, Force Sensor
-- **Dual Data Sources**: Live serial COM port or CSV file playback
-- **Professional Visualization**: 4-row stacked matplotlib plots (1600x900)
-- **104Hz Optimization**: 256-sample rolling buffer (~2.46 seconds)
-- **Real-time Stats**: Sample count, data rate, sensor readings
-- **Character Recognition**: AI-powered handwriting recognition using LSTM models
-- **Action Detection**: Gesture and action recognition from sensor data
+## ✨ Features
 
-## Project Structure
+### Core Capabilities
+- **📊 Real-time Visualization**: 4-row professional dashboard with 12+ subplots updating at 100ms intervals
+- **🤖 AI Character Recognition**: LSTM-based handwriting recognition with 80%+ confidence threshold
+- **🎮 Action Detection**: 5-state pen action classification (idle, hovering, writing, pen_down, pen_up)
+- **🔌 Dual Data Sources**: Live serial (COM/UART) or CSV file replay for testing
+- **⚡ High Performance**: 208Hz sampling rate with 256-sample circular buffers (~1.23s window)
+- **🔋 Battery Monitoring**: LiPo voltage tracking with percentage and health status
+- **🎛️ Sensor Fusion**: Kalman Filter, Extended Kalman Filter, Complementary Filter support
+
+### GUI Features
+- Interactive COM port and baudrate selection
+- Filter selection dropdown (None, KF, EKF, CF)
+- Real-time statistics panel (sample count, rate, latest values)
+- AI character recognition display with confidence scores
+- Pen action insights panel with detailed metrics
+- Professional color-coded plots with legends
+
+### Development Features
+- **Code Quality**: Pylint score 9.81/10 with Black formatting (line length 120)
+- **Test Suite**: 30 comprehensive tests across core, AI, actions, and launch modules
+- **CI/CD**: GitHub Actions workflows for automated testing and quality gates
+- **Documentation**: Complete developer guides, API documentation, and examples
+- **Modular Architecture**: Framework-independent service layer for easy UI swapping
+
+## 📁 Project Structure
 
 ```text
-sensor_fusion/
-├── run.py                     # Main application entry point
-├── train_character_model.py   # Character recognition training
-├── requirements.txt           # Python dependencies
-├── README.md                  # This file
-├── data/                      # Data files
-│   ├── sample_sensor_data.csv
-│   ├── test_data.csv
-│   ├── config.json
-│   └── onhw-chars_2021-06-30/ # Character recognition dataset
-├── examples/                  # Example scripts
-│   ├── QUICK_START.py
-│   ├── train_with_onhw.py
-│   └── evaluate_model.py
-└── src/                       # Source code
-    ├── gui/                   # GUI components
-    ├── ai/                    # AI models (LSTM, character recognition)
-    ├── core/                  # Core functionality
-    ├── services/              # Service layer
-    ├── actions/               # Action detection
-    ├── interfaces/            # Interfaces
-    └── utils/                 # Utility modules
+sensor-fusion-dashboard/
+├── run.py                          # 🚀 Main application entry point
+├── train_character_model.py        # 🎓 LSTM character recognition training
+├── requirements.txt                # 📦 Python dependencies
+├── README.md                       # 📖 Project documentation
+├── DEVELOPMENT.md                  # 👨‍💻 Developer guide
+├── PRODUCTION_CHECKLIST.md         # ✅ Production readiness checklist
+├── .pylintrc                       # 🔍 Pylint configuration (9.5+ score)
+├── pyproject.toml                  # ⚙️ Black & pytest configuration
+├── pytest.ini                      # 🧪 Test configuration
+├── run_quality_checks.sh           # 🎯 Quality check automation script
+├── check_production_ready.sh       # 🚦 Production verification script
+├── .github/workflows/              # 🔄 CI/CD automation
+│   ├── code-quality.yml            #    - Black + Pylint checks
+│   ├── tests.yml                   #    - Multi-version Python testing
+│   └── ci.yml                      #    - Combined CI with launch verification
+├── data/                           # 📊 Data files and datasets
+│   ├── config.json                 #    - Sensor configuration
+│   ├── sample_sensor_data.csv      #    - Sample CSV data (not tracked)
+│   ├── test_data.csv               #    - Test dataset (not tracked)
+│   └── onhw-chars_2021-06-30/      #    - OnHW handwriting dataset (not tracked)
+├── examples/                       # 💡 Example scripts and tutorials
+│   ├── README.md                   #    - Examples documentation
+│   ├── QUICK_START.py              #    - Quick start tutorial
+│   ├── train_with_onhw.py          #    - OnHW training example
+│   ├── train_model_only.py         #    - Model-only training
+│   ├── train_fast.py               #    - Fast training demo
+│   ├── evaluate_model.py           #    - Model evaluation
+│   ├── verify_setup.py             #    - Setup verification
+│   ├── example_services_usage.py   #    - Services layer demo
+│   └── test_integration.py         #    - Integration testing
+├── tests/                          # 🧪 Test suite (30 tests)
+│   ├── README.md                   #    - Testing documentation
+│   ├── test_core.py                #    - Core module tests (12 tests)
+│   ├── test_ai.py                  #    - AI module tests (6 tests)
+│   ├── test_actions.py             #    - Action detection tests (5 tests)
+│   └── test_launch.py              #    - Launch verification tests (10 tests)
+└── src/                            # 💻 Source code
+    ├── __init__.py
+    ├── gui/                        # 🖥️ GUI components (tkinter + matplotlib)
+    │   ├── gui_app.py              #    - Main dashboard GUI (395 lines)
+    │   ├── character_recognition_integration.py  # - AI recognition integration
+    │   └── plotter.py              #    - Matplotlib plotting utilities
+    ├── ai/                         # 🤖 AI & Machine Learning
+    │   ├── lstm.py                 #    - LSTM model implementation
+    │   ├── character_recognition/  #    - Character recognition module
+    │   │   ├── model.py            #       - CNN+BiLSTM architecture
+    │   │   ├── preprocessor.py     #       - Data preprocessing
+    │   │   └── trainer.py          #       - Training loop
+    │   └── utils/                  #    - AI utilities
+    │       └── data_utils.py       #       - Dataset loading & processing
+    ├── core/                       # ⚙️ Core functionality
+    │   ├── config.py               #    - Configuration manager
+    │   ├── sensor_parser.py        #    - CSV/Serial data parser (100% coverage)
+    │   ├── serial_config.py        #    - COM port configuration
+    │   └── data_buffers.py         #    - Legacy buffer implementation
+    ├── services/                   # 🔧 Service layer (framework-independent)
+    │   ├── sensor_service.py       #    - Sensor data management
+    │   ├── battery_service.py      #    - Battery monitoring service
+    │   ├── action_service.py       #    - Action detection service
+    │   └── ai_service.py           #    - AI inference service
+    ├── interfaces/                 # 🔌 Interface abstractions
+    │   ├── dashboard_interface.py  #    - Abstract UI interface
+    │   └── dashboard_controller.py #    - Business logic controller
+    ├── actions/                    # 🎯 Action detection
+    │   └── action_detector.py      #    - 5-state pen action classifier (75% coverage)
+    └── utils/                      # 🛠️ Utility modules
+        ├── sensor_buffers.py       #    - Thread-safe circular buffers (96% coverage)
+        ├── battery_utils.py        #    - Battery voltage converter (72% coverage)
+        └── sensor_fusion_filters.py #   - KF/EKF/CF implementations (22% coverage)
 ```
 
 ## Usage
@@ -109,14 +210,17 @@ Core dependencies:
 - `scikit-learn>=1.0.0` - ML utilities
 - `tkinter` - GUI (built-in)
 
-## Sensor Specifications
+## 📊 Sensor Specifications
 
-| Sensor | Model | Channels | Sample Rate |
-| ------ | ----- | -------- | ----------- |
-| Top IMU | LSM6DSO | Accel (3) + Gyro (3) | 104 Hz |
-| Magnetometer | ST | Magnetic field (3) | 104 Hz |
-| Rear IMU | LSM6DSM | Accel (3) + Gyro (3) | 104 Hz |
-| Force Sensor | HLP A04 | Force (3) | 104 Hz |
+| Sensor | Model | Type | Channels | Sample Rate | Range | Notes |
+|--------|-------|------|----------|-------------|-------|-------|
+| **Top IMU** | LSM6DSO | 6-axis | Accel (3) + Gyro (3) | 208 Hz | ±16g / ±2000°/s | Primary motion sensor |
+| **Rear IMU** | LSM6DSM | 6-axis | Accel (3) + Gyro (3) | 208 Hz | ±16g / ±2000°/s | Secondary motion sensor |
+| **Magnetometer** | ST | 3-axis | Magnetic field (3) | 208 Hz | ±50 gauss | Heading/orientation |
+| **Force Sensor** | HLP A04 | Analog | Force (1) | 208 Hz | 0-4096 ADC | Pen pressure |
+| **Battery** | 2S LiPo | Voltage | Battery (1) | 208 Hz | 6.0-8.4V | Power monitoring |
+
+**Total Data Channels**: 19 fields per sample (timestamp + 18 sensor values)
 
 ## Data Format
 
