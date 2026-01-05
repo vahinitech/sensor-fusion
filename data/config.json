@@ -17,7 +17,7 @@
       "stopbits": 1
     },
     "csv": {
-      "path": "sample_sensor_data.csv",
+      "path": "data/sample_sensor_data.csv",
       "has_header": false,
       "delimiter": ",",
       "playback_speed": 1.0

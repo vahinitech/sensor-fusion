@@ -1,0 +1,60 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  pylint:
+    runs-on: ubuntu-latest
+    name: Pylint Check
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pylint
+          pip install -r requirements.txt || true
+      
+      - name: Run Pylint
+        run: |
+          pylint src/ --fail-under=9.5 --output-format=text || exit_code=$?
+          if [ "${exit_code}" -gt 0 ]; then
+            echo "❌ Pylint score is below 9.5"
+            exit 1
+          fi
+          echo "✅ Pylint passed with score >= 9.5"
+
+  black:
+    runs-on: ubuntu-latest
+    name: Black Format Check
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Black
+        run: |
+          python -m pip install --upgrade pip
+          pip install black
+      
+      - name: Check code formatting with Black
+        run: |
+          black --check --diff src/ examples/ *.py || exit_code=$?
+          if [ "${exit_code}" -gt 0 ]; then
+            echo "❌ Code is not formatted with Black"
+            echo "Run 'black src/ examples/ *.py' to fix formatting"
+            exit 1
+          fi
+          echo "✅ Code is properly formatted with Black"

@@ -1,0 +1,101 @@
+[MASTER]
+# Use multiple processes to speed up Pylint
+jobs=4
+
+# Pickle collected data for later comparisons
+persistent=yes
+
+# List of plugins (as comma separated values of python module names)
+load-plugins=
+
+[MESSAGES CONTROL]
+# Disable specific warnings that are too strict for this project
+disable=
+    C0103,  # Invalid name (snake_case vs camelCase)
+    C0114,  # Missing module docstring
+    C0115,  # Missing class docstring
+    C0116,  # Missing function docstring
+    C0411,  # Wrong import order
+    C0415,  # Import outside toplevel
+    C0301,  # Line too long (handled by Black)
+    C0206,  # Consider using dict.items()
+    R0903,  # Too few public methods
+    R0913,  # Too many arguments
+    R0914,  # Too many local variables
+    R0917,  # Too many positional arguments
+    R1705,  # Unnecessary else after return
+    R1710,  # Inconsistent return statements
+    R1735,  # Consider using dict literal
+    W0212,  # Access to protected member
+    W0611,  # Unused import
+    W0612,  # Unused variable
+    W0613,  # Unused argument
+    W0621,  # Redefining name from outer scope
+    W0718,  # Catching too general exception
+    W1309,  # f-string without interpolation
+    W1514,  # open without encoding
+    E0401,  # Unable to import (false positives)
+    E0611,  # No name in module (false positives)
+    E1101,  # No member (false positives with numpy, tensorflow)
+    C0302,  # Too many lines in module
+    R0902,  # Too many instance attributes
+    R0912,  # Too many branches
+    R0915,  # Too many statements
+
+[REPORTS]
+# Set the output format
+output-format=text
+
+# Tells whether to display a full report
+reports=no
+
+# Python expression which should return a score less than or equal to 10
+evaluation=10.0 - ((float(5 * error + warning + refactor + convention) / statement) * 10)
+
+[BASIC]
+# Good variable names which should always be accepted
+good-names=i,j,k,x,y,z,ax,ay,az,gx,gy,gz,f,df,dt,id,logger
+
+# Regular expression matching correct argument names
+argument-rgx=[a-z_][a-z0-9_]{2,30}$
+
+# Regular expression matching correct variable names
+variable-rgx=[a-z_][a-z0-9_]{2,30}$
+
+[FORMAT]
+# Maximum number of characters on a single line
+max-line-length=120
+
+# Maximum number of lines in a module
+max-module-lines=1000
+
+[DESIGN]
+# Maximum number of arguments for function / method
+max-args=10
+
+# Maximum number of attributes for a class
+max-attributes=15
+
+# Minimum number of public methods for a class
+min-public-methods=1
+
+# Maximum number of public methods for a class
+max-public-methods=30
+
+[SIMILARITIES]
+# Minimum lines number of a similarity
+min-similarity-lines=10
+
+# Ignore comments when computing similarities
+ignore-comments=yes
+
+# Ignore docstrings when computing similarities
+ignore-docstrings=yes
+
+[TYPECHECK]
+# List of module names for which member attributes should not be checked
+ignored-modules=numpy,tensorflow,matplotlib,tkinter
+
+[IMPORTS]
+# Allow wildcard imports from modules
+allow-wildcard-with-all=no

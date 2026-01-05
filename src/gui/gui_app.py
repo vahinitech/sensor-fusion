@@ -13,7 +13,6 @@ from matplotlib.gridspec import GridSpec
 import numpy as np
 import threading
 import serial
-import csv
 import time
 import os
 from datetime import datetime
@@ -21,503 +20,463 @@ from datetime import datetime
 from core.serial_config import SerialConfig
 from utils.sensor_buffers import SensorBuffers
 from core.sensor_parser import SensorParser
-from core.data_reader import CSVReader, SerialReader
+from core.serial_reader import SerialReader
 from utils.sensor_fusion_filters import SensorFusionManager
+from utils.battery_utils import BatteryConverter
 from actions.action_detector import ActionDetector
 from gui.character_recognition_integration import CharacterRecognitionIntegration
 
 
 class SensorDashboardGUI:
     """Main GUI Application for Sensor Dashboard"""
-    
+
     def __init__(self, root):
         """Initialize the GUI application"""
         self.root = root
         self.root.title("Sensor Fusion Dashboard (208Hz)")
         self.root.geometry("1600x900")
-        
+
         # Application state
         self.running = False
         self.data_reader = None
         self.buffers = SensorBuffers(buffer_size=256)
         self.sample_count = 0
         self.start_time = None
-        self.csv_file = None
-        self.csv_reader = None
-        
+
+        # Battery converter (2S LiPo default)
+        self.battery_converter = BatteryConverter(min_mv=6000, max_mv=8400)
+
         # Sensor fusion filter
-        self.filter_manager = SensorFusionManager(filter_type='none')
+        self.filter_manager = SensorFusionManager(filter_type="none")
         self.apply_filter = False
-        
+
+        # Battery converter (2S LiPo default: 6000mV min, 8400mV max)
+        self.battery_converter = BatteryConverter(min_mv=6000, max_mv=8400, battery_type="lipo")
+
         # Action detector
         self.action_detector = ActionDetector(buffer_size=30)
-        
+
         # Character recognition integration (load model if it exists)
-        model_path = 'src/ai/models/character_model.h5'
+        model_path = "src/ai/models/character_model.h5"
         if not os.path.exists(model_path):
             model_path = None  # Don't try to load if model doesn't exist
-        
-        self.char_recognition = CharacterRecognitionIntegration(
-            model_path=model_path,
-            buffer_size=512
-        )
-        
+
+        self.char_recognition = CharacterRecognitionIntegration(model_path=model_path, buffer_size=512)
+
         # Track pen state for character recognition triggers
         self.prev_pen_action = "idle"
-        
+
         # Create UI
         self._create_control_panel()
         self._create_plot_area()
-        
+
         # Start animation loop
         self.update_plot()
-    
+
     def _create_control_panel(self):
         """Create the top control panel with COM port and baudrate selection"""
         control_frame = ttk.Frame(self.root)
         control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
-        
+
         # Left section - Status
         left_frame = ttk.Frame(control_frame)
         left_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
+
         ttk.Label(left_frame, text="Status:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
         self.status_label = ttk.Label(left_frame, text="⊘ Disconnected", foreground="red", font=("Arial", 10))
         self.status_label.pack(side=tk.LEFT, padx=5)
-        
+
         self.sample_label = ttk.Label(left_frame, text="Samples: 0", font=("Arial", 9))
         self.sample_label.pack(side=tk.LEFT, padx=20)
-        
+
         self.rate_label = ttk.Label(left_frame, text="Rate: 0.0 Hz", font=("Arial", 9))
         self.rate_label.pack(side=tk.LEFT, padx=5)
-        
+
+        # Battery display (next to rate)
+        self.battery_label = ttk.Label(left_frame, text="🔋 ---%", font=("Arial", 10, "bold"), foreground="gray")
+        self.battery_label.pack(side=tk.LEFT, padx=20)
+
         # Right section - Controls
         right_frame = ttk.Frame(control_frame)
         right_frame.pack(side=tk.RIGHT, fill=tk.X)
-        
-        # Data Source Selection
-        ttk.Label(right_frame, text="Source:", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
-        
-        self.source_var = tk.StringVar(value="serial")
-        self.source_combo = ttk.Combobox(
-            right_frame,
-            textvariable=self.source_var,
-            values=["serial", "csv"],
-            state="readonly",
-            width=10
+
+        # Connection type label
+        ttk.Label(right_frame, text="Serial (BLE Soon)", font=("Arial", 9), foreground="blue").pack(
+            side=tk.LEFT, padx=10
         )
-        self.source_combo.pack(side=tk.LEFT, padx=5)
-        self.source_combo.bind('<<ComboboxSelected>>', self._on_source_changed)
-        
-        # CSV File Selection
-        ttk.Label(right_frame, text="CSV:", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
-        self.csv_entry = ttk.Entry(right_frame, width=20)
-        self.csv_entry.pack(side=tk.LEFT, padx=5)
-        self.csv_entry.insert(0, "../data/sample_sensor_data.csv")
-        
+
         # COM Port Selection
         ttk.Label(right_frame, text="COM Port:", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
-        
+
         self.port_var = tk.StringVar()
-        self.port_combo = ttk.Combobox(
-            right_frame,
-            textvariable=self.port_var,
-            state="readonly",
-            width=12
-        )
+        self.port_combo = ttk.Combobox(right_frame, textvariable=self.port_var, state="readonly", width=12)
         self.port_combo.pack(side=tk.LEFT, padx=5)
         self._refresh_ports()
-        
+
         # Refresh Ports Button
         ttk.Button(right_frame, text="↻", width=3, command=self._refresh_ports).pack(side=tk.LEFT, padx=2)
-        
+
         # Baudrate Selection
         ttk.Label(right_frame, text="Baud:", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
-        
+
         self.baudrate_var = tk.StringVar(value="115200")
         self.baudrate_combo = ttk.Combobox(
             right_frame,
             textvariable=self.baudrate_var,
             values=[str(b) for b in SerialConfig.get_standard_baudrates()],
             state="readonly",
-            width=10
+            width=10,
         )
         self.baudrate_combo.pack(side=tk.LEFT, padx=5)
-        
+
         # Sensor Fusion Filter Selection
         ttk.Label(right_frame, text="Filter:", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
-        
+
         self.filter_var = tk.StringVar(value="none")
         self.filter_combo = ttk.Combobox(
-            right_frame,
-            textvariable=self.filter_var,
-            values=["none", "kf", "ekf", "cf"],
-            state="readonly",
-            width=10
+            right_frame, textvariable=self.filter_var, values=["none", "kf", "ekf", "cf"], state="readonly", width=10
         )
         self.filter_combo.pack(side=tk.LEFT, padx=5)
-        self.filter_combo.bind('<<ComboboxSelected>>', self._on_filter_changed)
-        
+        self.filter_combo.bind("<<ComboboxSelected>>", self._on_filter_changed)
+
         # Control Buttons
         self.connect_btn = ttk.Button(right_frame, text="Connect", command=self._connect)
         self.connect_btn.pack(side=tk.LEFT, padx=5)
-        
+
         self.disconnect_btn = ttk.Button(right_frame, text="Disconnect", command=self._disconnect, state=tk.DISABLED)
         self.disconnect_btn.pack(side=tk.LEFT, padx=2)
-        
-        # Hide CSV entry initially
-        self.csv_entry.pack_forget()
-    
+
     def _on_filter_changed(self, event=None):
         """Handle filter type change"""
         filter_type = self.filter_var.get()
         if filter_type == "none":
             self.apply_filter = False
-            self.filter_manager.set_filter_type('none')
+            self.filter_manager.set_filter_type("none")
         else:
             self.apply_filter = True
             self.filter_manager.set_filter_type(filter_type)
             self.filter_manager.reset()
-    
-    def _on_source_changed(self, event=None):
-        """Handle data source change"""
-        source = self.source_var.get()
-        
-        if source == "csv":
-            self.csv_entry.pack(side=tk.LEFT, padx=5)
-            self.port_combo.pack_forget()
-            self.port_combo.master.children[list(self.port_combo.master.children.keys())[0]].pack_forget()
-        else:
-            self.csv_entry.pack_forget()
-            self.port_combo.pack(side=tk.LEFT, padx=5)
-    
+
     def _create_plot_area(self):
         """Create the matplotlib plot area with action box"""
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
+
         # Left side - plots
         plot_frame = ttk.Frame(main_frame)
         plot_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
+
         # Right side - action insights (split into two sections)
         action_frame = ttk.Frame(main_frame)
         action_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(10, 0))
-        
+
         # AI Character Recognition Section
         ai_recognition_frame = ttk.LabelFrame(action_frame, text="AI CHARACTER RECOGNITION", padding=10)
         ai_recognition_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(0, 5))
-        
-        self.ai_recognition_canvas = tk.Canvas(ai_recognition_frame, bg="#e8f4f8", width=200, height=200, 
-                                                highlightthickness=1, highlightbackground="#0066cc")
+
+        self.ai_recognition_canvas = tk.Canvas(
+            ai_recognition_frame,
+            bg="#e8f4f8",
+            width=200,
+            height=200,
+            highlightthickness=1,
+            highlightbackground="#0066cc",
+        )
         self.ai_recognition_canvas.pack(fill=tk.BOTH, expand=True)
-        
+
         self.ai_recognition_text = self.ai_recognition_canvas.create_text(
-            100, 100, text="Ready\n\nModel: Loaded" if self.char_recognition.model else "No Model",
+            100,
+            100,
+            text="Ready\n\nModel: Loaded" if self.char_recognition.model else "No Model",
             font=("Arial", 12, "bold"),
             fill="#0066cc",
             anchor="center",
-            width=180
+            width=180,
         )
-        
+
         # Pen Action Insights Section
         pen_action_frame = ttk.LabelFrame(action_frame, text="PEN ACTION INSIGHTS", padding=10)
         pen_action_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(5, 0))
-        
-        self.action_canvas = tk.Canvas(pen_action_frame, bg="white", width=200, height=200, 
-                                       highlightthickness=1, highlightbackground="black")
-        self.action_canvas.pack(fill=tk.BOTH, expand=True)
-        
-        self.action_text = self.action_canvas.create_text(
-            100, 100, text="Initializing...",
-            font=("Arial", 12, "bold"),
-            fill="black",
-            anchor="center",
-            width=180
+
+        self.action_canvas = tk.Canvas(
+            pen_action_frame, bg="white", width=200, height=200, highlightthickness=1, highlightbackground="black"
         )
-        
+        self.action_canvas.pack(fill=tk.BOTH, expand=True)
+
+        self.action_text = self.action_canvas.create_text(
+            100, 100, text="Initializing...", font=("Arial", 12, "bold"), fill="black", anchor="center", width=180
+        )
+
         # Create figure for plots
         self.fig = Figure(figsize=(11, 8), dpi=100)
-        self.fig.suptitle('Multi-Sensor Real-Time Dashboard (208Hz)', fontsize=14, fontweight='bold')
-        
+        self.fig.suptitle("Multi-Sensor Real-Time Dashboard (208Hz)", fontsize=14, fontweight="bold")
+
         # Create grid layout
         gs = GridSpec(4, 3, figure=self.fig, hspace=0.35, wspace=0.3)
-        
+
         # ROW 1: Top IMU
         self.ax1_accel = self.fig.add_subplot(gs[0, 0])
         self.ax1_gyro = self.fig.add_subplot(gs[0, 1])
         self.ax1_mag = self.fig.add_subplot(gs[0, 2])
-        
+
         self._setup_accel_plot(self.ax1_accel, "TOP IMU: Accelerometer")
         self._setup_gyro_plot(self.ax1_gyro, "TOP IMU: Gyroscope")
         self._setup_mag_plot(self.ax1_mag, "TOP IMU: Accel Magnitude")
-        
+
         # ROW 2: Magnetometer
         self.ax2_mag = self.fig.add_subplot(gs[1, :])
         self._setup_mag_field_plot(self.ax2_mag, "MAGNETOMETER: Magnetic Field (ST)")
-        
+
         # ROW 3: Rear IMU
         self.ax3_accel = self.fig.add_subplot(gs[2, 0])
         self.ax3_gyro = self.fig.add_subplot(gs[2, 1])
         self.ax3_mag = self.fig.add_subplot(gs[2, 2])
-        
+
         self._setup_accel_plot(self.ax3_accel, "REAR IMU: Accelerometer")
         self._setup_gyro_plot(self.ax3_gyro, "REAR IMU: Gyroscope")
         self._setup_mag_plot(self.ax3_mag, "REAR IMU: Accel Magnitude")
-        
+
         # ROW 4: Force Sensor & Stats
         self.ax4_force = self.fig.add_subplot(gs[3, 0:2])
         self.ax4_stats = self.fig.add_subplot(gs[3, 2])
-        
-        self._setup_force_plot(self.ax4_force, "FORCE SENSOR: 3-Axis Force")
-        self.ax4_stats.axis('off')
-        self.stats_text = self.ax4_stats.text(0.05, 0.95, '', transform=self.ax4_stats.transAxes,
-                                             verticalalignment='top', fontfamily='monospace',
-                                             fontsize=8, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-        
+
+        self._setup_force_plot(self.ax4_force, "FORCE SENSOR: Raw & Voltage")
+        self.ax4_stats.axis("off")
+        self.stats_text = self.ax4_stats.text(
+            0.05,
+            0.95,
+            "",
+            transform=self.ax4_stats.transAxes,
+            verticalalignment="top",
+            fontfamily="monospace",
+            fontsize=8,
+            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+        )
+
         # Create canvas
         self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        
+
         # Store main frame for later reference
         self.plot_frame = plot_frame
         self.action_frame = action_frame
-        
+
         # Store line objects for updates
         self._create_line_objects()
-    
+
     def _setup_accel_plot(self, ax, title):
         """Setup accelerometer plot"""
-        ax.set_title(title, fontweight='bold', fontsize=10)
-        ax.set_ylabel('m/s²', fontsize=9)
+        ax.set_title(title, fontweight="bold", fontsize=10)
+        ax.set_ylabel("m/s²", fontsize=9)
         ax.grid(True, alpha=0.3)
         ax.set_ylim(-8000, 8000)
-    
+
     def _setup_gyro_plot(self, ax, title):
         """Setup gyroscope plot"""
-        ax.set_title(title, fontweight='bold', fontsize=10)
-        ax.set_ylabel('°/s', fontsize=9)
+        ax.set_title(title, fontweight="bold", fontsize=10)
+        ax.set_ylabel("°/s", fontsize=9)
         ax.grid(True, alpha=0.3)
         ax.set_ylim(-2000, 2000)
-    
+
     def _setup_mag_plot(self, ax, title):
         """Setup magnitude plot"""
-        ax.set_title(title, fontweight='bold', fontsize=10)
-        ax.set_ylabel('|a| (m/s²)', fontsize=9)
+        ax.set_title(title, fontweight="bold", fontsize=10)
+        ax.set_ylabel("|a| (m/s²)", fontsize=9)
         ax.grid(True, alpha=0.3)
         ax.set_ylim(0, 10000)
-    
+
     def _setup_mag_field_plot(self, ax, title):
         """Setup magnetic field plot"""
-        ax.set_title(title, fontweight='bold', fontsize=10)
-        ax.set_ylabel('μT', fontsize=9)
+        ax.set_title(title, fontweight="bold", fontsize=10)
+        ax.set_ylabel("μT", fontsize=9)
         ax.grid(True, alpha=0.3)
         ax.set_ylim(-10000, 10000)
-    
+
     def _setup_force_plot(self, ax, title):
         """Setup force sensor plot"""
-        ax.set_title(title, fontweight='bold', fontsize=10)
-        ax.set_xlabel('Sample Index', fontsize=9)
-        ax.set_ylabel('Force (ADC)', fontsize=9)
+        ax.set_title(title, fontweight="bold", fontsize=10)
+        ax.set_xlabel("Sample Index", fontsize=9)
+        ax.set_ylabel("Force (ADC) / Voltage (mV)", fontsize=9)
         ax.grid(True, alpha=0.3)
         # Don't set fixed ylim - will auto-scale in update_plot based on actual data
-    
+
     def _create_line_objects(self):
         """Create line objects for all plots"""
         # Top IMU
-        self.line_top_ax, = self.ax1_accel.plot([], [], 'r-', linewidth=1.5, label='X', alpha=0.8)
-        self.line_top_ay, = self.ax1_accel.plot([], [], 'g-', linewidth=1.5, label='Y', alpha=0.8)
-        self.line_top_az, = self.ax1_accel.plot([], [], 'b-', linewidth=1.5, label='Z', alpha=0.8)
-        self.ax1_accel.legend(loc='upper right', fontsize=8)
-        
-        self.line_top_gx, = self.ax1_gyro.plot([], [], 'r-', linewidth=1.5, label='X', alpha=0.8)
-        self.line_top_gy, = self.ax1_gyro.plot([], [], 'g-', linewidth=1.5, label='Y', alpha=0.8)
-        self.line_top_gz, = self.ax1_gyro.plot([], [], 'b-', linewidth=1.5, label='Z', alpha=0.8)
-        self.ax1_gyro.legend(loc='upper right', fontsize=8)
-        
-        self.line_top_mag, = self.ax1_mag.plot([], [], 'purple', linewidth=2)
-        
+        (self.line_top_ax,) = self.ax1_accel.plot([], [], "r-", linewidth=1.5, label="X", alpha=0.8)
+        (self.line_top_ay,) = self.ax1_accel.plot([], [], "g-", linewidth=1.5, label="Y", alpha=0.8)
+        (self.line_top_az,) = self.ax1_accel.plot([], [], "b-", linewidth=1.5, label="Z", alpha=0.8)
+        self.ax1_accel.legend(loc="upper right", fontsize=8)
+
+        (self.line_top_gx,) = self.ax1_gyro.plot([], [], "r-", linewidth=1.5, label="X", alpha=0.8)
+        (self.line_top_gy,) = self.ax1_gyro.plot([], [], "g-", linewidth=1.5, label="Y", alpha=0.8)
+        (self.line_top_gz,) = self.ax1_gyro.plot([], [], "b-", linewidth=1.5, label="Z", alpha=0.8)
+        self.ax1_gyro.legend(loc="upper right", fontsize=8)
+
+        (self.line_top_mag,) = self.ax1_mag.plot([], [], "purple", linewidth=2)
+
         # Magnetometer
-        self.line_mag_x, = self.ax2_mag.plot([], [], 'r-', linewidth=1.5, label='X', alpha=0.8)
-        self.line_mag_y, = self.ax2_mag.plot([], [], 'g-', linewidth=1.5, label='Y', alpha=0.8)
-        self.line_mag_z, = self.ax2_mag.plot([], [], 'b-', linewidth=1.5, label='Z', alpha=0.8)
-        self.ax2_mag.legend(loc='upper right', fontsize=9)
-        
+        (self.line_mag_x,) = self.ax2_mag.plot([], [], "r-", linewidth=1.5, label="X", alpha=0.8)
+        (self.line_mag_y,) = self.ax2_mag.plot([], [], "g-", linewidth=1.5, label="Y", alpha=0.8)
+        (self.line_mag_z,) = self.ax2_mag.plot([], [], "b-", linewidth=1.5, label="Z", alpha=0.8)
+        self.ax2_mag.legend(loc="upper right", fontsize=9)
+
         # Rear IMU
-        self.line_rear_ax, = self.ax3_accel.plot([], [], 'r-', linewidth=1.5, label='X', alpha=0.8)
-        self.line_rear_ay, = self.ax3_accel.plot([], [], 'g-', linewidth=1.5, label='Y', alpha=0.8)
-        self.line_rear_az, = self.ax3_accel.plot([], [], 'b-', linewidth=1.5, label='Z', alpha=0.8)
-        self.ax3_accel.legend(loc='upper right', fontsize=8)
-        
-        self.line_rear_gx, = self.ax3_gyro.plot([], [], 'r-', linewidth=1.5, label='X', alpha=0.8)
-        self.line_rear_gy, = self.ax3_gyro.plot([], [], 'g-', linewidth=1.5, label='Y', alpha=0.8)
-        self.line_rear_gz, = self.ax3_gyro.plot([], [], 'b-', linewidth=1.5, label='Z', alpha=0.8)
-        self.ax3_gyro.legend(loc='upper right', fontsize=8)
-        
-        self.line_rear_mag, = self.ax3_mag.plot([], [], 'orange', linewidth=2)
-        
-        # Force Sensor
-        self.line_force_x, = self.ax4_force.plot([], [], 'r-', linewidth=1.5, label='Fx', alpha=0.8)
-        self.line_force_y, = self.ax4_force.plot([], [], 'g-', linewidth=1.5, label='Fy', alpha=0.8)
-        self.line_force_z, = self.ax4_force.plot([], [], 'b-', linewidth=1.5, label='Fz', alpha=0.8)
-        self.ax4_force.legend(loc='upper right', fontsize=9)
-    
+        (self.line_rear_ax,) = self.ax3_accel.plot([], [], "r-", linewidth=1.5, label="X", alpha=0.8)
+        (self.line_rear_ay,) = self.ax3_accel.plot([], [], "g-", linewidth=1.5, label="Y", alpha=0.8)
+        (self.line_rear_az,) = self.ax3_accel.plot([], [], "b-", linewidth=1.5, label="Z", alpha=0.8)
+        self.ax3_accel.legend(loc="upper right", fontsize=8)
+
+        (self.line_rear_gx,) = self.ax3_gyro.plot([], [], "r-", linewidth=1.5, label="X", alpha=0.8)
+        (self.line_rear_gy,) = self.ax3_gyro.plot([], [], "g-", linewidth=1.5, label="Y", alpha=0.8)
+        (self.line_rear_gz,) = self.ax3_gyro.plot([], [], "b-", linewidth=1.5, label="Z", alpha=0.8)
+        self.ax3_gyro.legend(loc="upper right", fontsize=8)
+
+        (self.line_rear_mag,) = self.ax3_mag.plot([], [], "orange", linewidth=2)
+
+        # Force Sensor (raw force and force voltage)
+        (self.line_force_raw,) = self.ax4_force.plot([], [], "r-", linewidth=1.5, label="Force Raw (ADC)", alpha=0.8)
+        (self.line_force_mv,) = self.ax4_force.plot([], [], "b-", linewidth=1.5, label="Force (mV)", alpha=0.8)
+        self.ax4_force.legend(loc="upper right", fontsize=9)
+
     def _refresh_ports(self):
         """Refresh available COM ports"""
         ports = SerialConfig.get_available_ports()
-        self.port_combo['values'] = ports
+        self.port_combo["values"] = ports
         if ports:
             self.port_combo.current(0)
-    
+
     def _connect(self):
-        """Connect to data source"""
-        source = self.source_var.get()
-        
-        if source == "serial":
-            self._connect_serial()
-        else:
-            self._connect_csv()
-    
+        """Connect to serial port"""
+        self._connect_serial()
+
     def _connect_serial(self):
         """Connect to serial port"""
         port = self.port_var.get()
         baudrate = int(self.baudrate_var.get())
-        
+
         if not port:
             messagebox.showerror("Error", "Please select a COM port")
             return
-        
+
         # Validate connection
         success, msg = SerialConfig.validate_connection(port, baudrate)
         if not success:
             messagebox.showerror("Connection Error", msg)
             return
-        
+
         # Create serial reader
         self.data_reader = SerialReader(port, baudrate, self._on_data_received)
         if not self.data_reader.connect():
             messagebox.showerror("Error", "Failed to connect to serial port")
             return
-        
+
         self.data_reader.start()
         self.running = True
         self.start_time = datetime.now()
         self.sample_count = 0
-        
+
         self._update_connection_ui(True)
-    
-    def _connect_csv(self):
-        """Connect to CSV file"""
-        csv_path = self.csv_entry.get()
-        
-        if not csv_path:
-            messagebox.showerror("Error", "Please enter CSV file path")
-            return
-        
-        # Create CSV reader
-        self.data_reader = CSVReader(csv_path, self._on_data_received, has_header=False)
-        if not self.data_reader.connect():
-            messagebox.showerror("Error", f"Failed to open CSV file: {csv_path}")
-            return
-        
-        self.data_reader.start()
-        self.running = True
-        self.start_time = datetime.now()
-        self.sample_count = 0
-        
-        self._update_connection_ui(True)
-    
+
     def _disconnect(self):
         """Disconnect from data source"""
         if self.data_reader:
             self.data_reader.stop()
             self.data_reader.close()
             self.data_reader = None
-        
+
         # Reset filter and action detector
         self.filter_manager.reset()
         self.action_detector.reset()
         self.prev_pen_action = "idle"
-        
+
         self.running = False
         self._update_connection_ui(False)
-    
+
     def _on_data_received(self, data):
         """Callback when data is received"""
         # Data comes as a string line from DataReader
-        line = data if isinstance(data, str) else data.get('raw_line', '')
+        line = data if isinstance(data, str) else data.get("raw_line", "")
         if not line:
             return
-        
+
         parsed = SensorParser.parse_line(line)
         if not parsed:
             return
-        
+
         # Debug: Show force sensor values every 100 samples to verify data flow
         if self.sample_count % 100 == 0:
-            print(f"📡 Raw data | t={parsed['timestamp']} | force_x={parsed['force_x']:.0f} | force_y={parsed['force_y']:.0f} | force_z={parsed['force_z']:.0f}")
-        
+            print(
+                f"📡 Raw data | t={parsed['timestamp']} | force_raw={parsed['force_raw']:.0f} | battery={parsed['battery_mv']:.0f}mV | force_mv={parsed['force_mv']:.0f}mV"
+            )
+
         # Apply sensor fusion filters if enabled
         # NOTE: Kalman filters applied ONLY to IMU sensors (accelerometer & gyroscope)
         # Magnetometer and Force sensor data is NOT filtered - used raw
         if self.apply_filter:
             # Filter top IMU (accelerometer and gyroscope)
-            parsed['top_accel_x'] = self.filter_manager.filter_accel({'x': parsed['top_accel_x'], 'y': 0, 'z': 0})['x']
-            parsed['top_accel_y'] = self.filter_manager.filter_accel({'x': 0, 'y': parsed['top_accel_y'], 'z': 0})['y']
-            parsed['top_accel_z'] = self.filter_manager.filter_accel({'x': 0, 'y': 0, 'z': parsed['top_accel_z']})['z']
-            
-            parsed['top_gyro_x'] = self.filter_manager.filter_gyro({'x': parsed['top_gyro_x'], 'y': 0, 'z': 0})['x']
-            parsed['top_gyro_y'] = self.filter_manager.filter_gyro({'x': 0, 'y': parsed['top_gyro_y'], 'z': 0})['y']
-            parsed['top_gyro_z'] = self.filter_manager.filter_gyro({'x': 0, 'y': 0, 'z': parsed['top_gyro_z']})['z']
-            
+            parsed["top_accel_x"] = self.filter_manager.filter_accel({"x": parsed["top_accel_x"], "y": 0, "z": 0})["x"]
+            parsed["top_accel_y"] = self.filter_manager.filter_accel({"x": 0, "y": parsed["top_accel_y"], "z": 0})["y"]
+            parsed["top_accel_z"] = self.filter_manager.filter_accel({"x": 0, "y": 0, "z": parsed["top_accel_z"]})["z"]
+
+            parsed["top_gyro_x"] = self.filter_manager.filter_gyro({"x": parsed["top_gyro_x"], "y": 0, "z": 0})["x"]
+            parsed["top_gyro_y"] = self.filter_manager.filter_gyro({"x": 0, "y": parsed["top_gyro_y"], "z": 0})["y"]
+            parsed["top_gyro_z"] = self.filter_manager.filter_gyro({"x": 0, "y": 0, "z": parsed["top_gyro_z"]})["z"]
+
             # Filter rear IMU (accelerometer and gyroscope)
-            parsed['rear_accel_x'] = self.filter_manager.filter_accel({'x': parsed['rear_accel_x'], 'y': 0, 'z': 0})['x']
-            parsed['rear_accel_y'] = self.filter_manager.filter_accel({'x': 0, 'y': parsed['rear_accel_y'], 'z': 0})['y']
-            parsed['rear_accel_z'] = self.filter_manager.filter_accel({'x': 0, 'y': 0, 'z': parsed['rear_accel_z']})['z']
-            
-            parsed['rear_gyro_x'] = self.filter_manager.filter_gyro({'x': parsed['rear_gyro_x'], 'y': 0, 'z': 0})['x']
-            parsed['rear_gyro_y'] = self.filter_manager.filter_gyro({'x': 0, 'y': parsed['rear_gyro_y'], 'z': 0})['y']
-            parsed['rear_gyro_z'] = self.filter_manager.filter_gyro({'x': 0, 'y': 0, 'z': parsed['rear_gyro_z']})['z']
-        
+            parsed["rear_accel_x"] = self.filter_manager.filter_accel({"x": parsed["rear_accel_x"], "y": 0, "z": 0})[
+                "x"
+            ]
+            parsed["rear_accel_y"] = self.filter_manager.filter_accel({"x": 0, "y": parsed["rear_accel_y"], "z": 0})[
+                "y"
+            ]
+            parsed["rear_accel_z"] = self.filter_manager.filter_accel({"x": 0, "y": 0, "z": parsed["rear_accel_z"]})[
+                "z"
+            ]
+
+            parsed["rear_gyro_x"] = self.filter_manager.filter_gyro({"x": parsed["rear_gyro_x"], "y": 0, "z": 0})["x"]
+            parsed["rear_gyro_y"] = self.filter_manager.filter_gyro({"x": 0, "y": parsed["rear_gyro_y"], "z": 0})["y"]
+            parsed["rear_gyro_z"] = self.filter_manager.filter_gyro({"x": 0, "y": 0, "z": parsed["rear_gyro_z"]})["z"]
+
         # Update action detector
         self.action_detector.update(
-            top_accel={'x': parsed['top_accel_x'], 'y': parsed['top_accel_y'], 'z': parsed['top_accel_z']},
-            rear_accel={'x': parsed['rear_accel_x'], 'y': parsed['rear_accel_y'], 'z': parsed['rear_accel_z']},
-            top_gyro={'x': parsed['top_gyro_x'], 'y': parsed['top_gyro_y'], 'z': parsed['top_gyro_z']},
-            rear_gyro={'x': parsed['rear_gyro_x'], 'y': parsed['rear_gyro_y'], 'z': parsed['rear_gyro_z']},
-            mag={'x': parsed['mag_x'], 'y': parsed['mag_y'], 'z': parsed['mag_z']},
-            force={'x': parsed['force_x'], 'y': parsed['force_y'], 'z': parsed['force_z']}
+            top_accel={"x": parsed["top_accel_x"], "y": parsed["top_accel_y"], "z": parsed["top_accel_z"]},
+            rear_accel={"x": parsed["rear_accel_x"], "y": parsed["rear_accel_y"], "z": parsed["rear_accel_z"]},
+            top_gyro={"x": parsed["top_gyro_x"], "y": parsed["top_gyro_y"], "z": parsed["top_gyro_z"]},
+            rear_gyro={"x": parsed["rear_gyro_x"], "y": parsed["rear_gyro_y"], "z": parsed["rear_gyro_z"]},
+            mag={"x": parsed["mag_x"], "y": parsed["mag_y"], "z": parsed["mag_z"]},
+            force={"x": parsed["force_x"], "y": parsed["force_y"], "z": parsed["force_z"]},
         )
-        
+
         # Detect pen state transitions for character recognition
         current_action = self.action_detector.current_action
-        
+
         # Debug: print action transitions
         if current_action != self.prev_pen_action:
             print(f"🔄 Action changed: {self.prev_pen_action} → {current_action}")
-        
+
         # Start writing when pen touches down or writing action detected
-        if current_action in ['pen_down', 'writing'] and self.prev_pen_action not in ['pen_down', 'writing']:
+        if current_action in ["pen_down", "writing"] and self.prev_pen_action not in ["pen_down", "writing"]:
             # Clear previous recognition when starting new character
             self.char_recognition.recognized_char = None
             self.char_recognition.recognized_confidence = 0.0
             self.char_recognition.start_writing()
             print(f"✏️  Started collecting character data (pen down/writing detected)")
             print(f"    Action transitioned: {self.prev_pen_action} → {current_action}")
-        
+
         # Stop writing when pen lifts up OR goes to any non-writing state
-        elif self.prev_pen_action in ['pen_down', 'writing'] and current_action not in ['pen_down', 'writing']:
-            sample_count = len(self.char_recognition.writing_buffer['top_accel_x'])
+        elif self.prev_pen_action in ["pen_down", "writing"] and current_action not in ["pen_down", "writing"]:
+            sample_count = len(self.char_recognition.writing_buffer["top_accel_x"])
             duration = sample_count / 208.0
             print(f"⏸️  Pen stopped writing (transitioned to: {current_action})")
             print(f"📊 Collected {sample_count} samples (~{duration:.2f}s of writing)")
             self.char_recognition.stop_writing()
             print(f"⏳ Waiting for {self.char_recognition.pause_threshold:.1f}s pause to trigger recognition...")
-        
+
         # Check if pause is complete - trigger recognition
         pause_result = self.char_recognition.check_pause_complete()
-        if pause_result == 'complete':
+        if pause_result == "complete":
             print(f"\n{'='*60}")
             print(f"✅ PAUSE COMPLETE - RECOGNIZING CHARACTER")
             print(f"{'='*60}")
@@ -532,28 +491,31 @@ class SensorDashboardGUI:
                 else:
                     print(f"\nℹ️  No model loaded to recognize")
                     print(f"{'='*60}\n")
-        elif pause_result == 'waiting' and self.char_recognition.waiting_for_pause:
+        elif pause_result == "waiting" and self.char_recognition.waiting_for_pause:
             # Pause countdown is handled in check_pause_complete() now, so just pass here
             pass
-        
+
         self.prev_pen_action = current_action
-        
+
         # Update character recognition with sensor data
         if self.char_recognition.is_writing:
             self.char_recognition.add_sensor_data(parsed)
             # Log sample count every 20 samples
-            sample_count = len(self.char_recognition.writing_buffer['top_accel_x'])
+            sample_count = len(self.char_recognition.writing_buffer["top_accel_x"])
             if sample_count > 0 and sample_count % 20 == 0:
                 print(f"📊 Collecting... {sample_count} samples (~{sample_count/208:.2f}s @ 208Hz)")
-        
+
         # Add to buffers
         self.buffers.add_sample(self.sample_count, parsed)
         self.sample_count += 1
-        
-        # Debug: Print force sensor values every 50 samples to verify they're being received
+
+        # Debug: Print force/battery sensor values every 50 samples to verify they're being received
         if self.sample_count % 50 == 0:
-            print(f"🔧 Force sensor values: X={parsed['force_x']:.0f}, Y={parsed['force_y']:.0f}, Z={parsed['force_z']:.0f}")
-    
+            battery_pct = self.battery_converter.voltage_to_percentage(parsed["battery_mv"])
+            print(
+                f"🔧 Force Raw: {parsed['force_raw']:.0f}, Battery: {parsed['battery_mv']:.0f}mV ({battery_pct:.0f}%), Force mV: {parsed['force_mv']:.0f}mV"
+            )
+
     def _update_connection_ui(self, connected):
         """Update UI based on connection state"""
         if connected:
@@ -561,10 +523,8 @@ class SensorDashboardGUI:
             self.connect_btn.config(state=tk.DISABLED)
             self.disconnect_btn.config(state=tk.NORMAL)
             # Disable all config controls while connected
-            self.source_combo.config(state="disabled")
             self.port_combo.config(state="disabled")
             self.baudrate_combo.config(state="disabled")
-            self.csv_entry.config(state="disabled")
             # Keep filter combo enabled so user can change filters during operation
             self.filter_combo.config(state="readonly")
         else:
@@ -572,93 +532,88 @@ class SensorDashboardGUI:
             self.connect_btn.config(state=tk.NORMAL)
             self.disconnect_btn.config(state=tk.DISABLED)
             # Re-enable all config controls
-            self.source_combo.config(state="readonly")
             self.port_combo.config(state="readonly")
             self.baudrate_combo.config(state="readonly")
-            self.csv_entry.config(state="normal")
             self.filter_combo.config(state="readonly")
             self.buffers.clear()
             self.sample_count = 0
-    
+            # Reset battery display
+            self.battery_label.config(text="🔋 Battery: ---%", foreground="gray")
+
     def update_plot(self):
         """Update plots with latest data"""
         if self.running and len(self.buffers.timestamps) > 0:
             # Get thread-safe snapshot of all data as lists
             data = self.buffers.get_all()
-            n_samples = len(data['timestamps'])
-            
+            n_samples = len(data["timestamps"])
+
             if n_samples == 0:
                 self.root.after(100, self.update_plot)
                 return
-            
+
             # Use numpy arrays
             x_indices = np.arange(n_samples)
             x_min = max(0, n_samples - 256)
-            
+
             # Update Top IMU
-            self.line_top_ax.set_data(x_indices, data['top_accel_x'])
-            self.line_top_ay.set_data(x_indices, data['top_accel_y'])
-            self.line_top_az.set_data(x_indices, data['top_accel_z'])
+            self.line_top_ax.set_data(x_indices, data["top_accel_x"])
+            self.line_top_ay.set_data(x_indices, data["top_accel_y"])
+            self.line_top_az.set_data(x_indices, data["top_accel_z"])
             self.ax1_accel.set_xlim(x_min, n_samples)
-            
-            self.line_top_gx.set_data(x_indices, data['top_gyro_x'])
-            self.line_top_gy.set_data(x_indices, data['top_gyro_y'])
-            self.line_top_gz.set_data(x_indices, data['top_gyro_z'])
+
+            self.line_top_gx.set_data(x_indices, data["top_gyro_x"])
+            self.line_top_gy.set_data(x_indices, data["top_gyro_y"])
+            self.line_top_gz.set_data(x_indices, data["top_gyro_z"])
             self.ax1_gyro.set_xlim(x_min, n_samples)
-            
+
             # Magnitude - use numpy for vectorized computation on lists
-            top_accel_arr = np.column_stack([data['top_accel_x'], 
-                                             data['top_accel_y'], 
-                                             data['top_accel_z']])
+            top_accel_arr = np.column_stack([data["top_accel_x"], data["top_accel_y"], data["top_accel_z"]])
             top_mag = np.linalg.norm(top_accel_arr, axis=1)
             self.line_top_mag.set_data(x_indices, top_mag)
             self.ax1_mag.set_xlim(x_min, n_samples)
-            
+
             # Magnetometer
-            self.line_mag_x.set_data(x_indices, data['mag_x'])
-            self.line_mag_y.set_data(x_indices, data['mag_y'])
-            self.line_mag_z.set_data(x_indices, data['mag_z'])
+            self.line_mag_x.set_data(x_indices, data["mag_x"])
+            self.line_mag_y.set_data(x_indices, data["mag_y"])
+            self.line_mag_z.set_data(x_indices, data["mag_z"])
             self.ax2_mag.set_xlim(x_min, n_samples)
-            
+
             # Rear IMU
-            self.line_rear_ax.set_data(x_indices, data['rear_accel_x'])
-            self.line_rear_ay.set_data(x_indices, data['rear_accel_y'])
-            self.line_rear_az.set_data(x_indices, data['rear_accel_z'])
+            self.line_rear_ax.set_data(x_indices, data["rear_accel_x"])
+            self.line_rear_ay.set_data(x_indices, data["rear_accel_y"])
+            self.line_rear_az.set_data(x_indices, data["rear_accel_z"])
             self.ax3_accel.set_xlim(x_min, n_samples)
-            
-            self.line_rear_gx.set_data(x_indices, data['rear_gyro_x'])
-            self.line_rear_gy.set_data(x_indices, data['rear_gyro_y'])
-            self.line_rear_gz.set_data(x_indices, data['rear_gyro_z'])
+
+            self.line_rear_gx.set_data(x_indices, data["rear_gyro_x"])
+            self.line_rear_gy.set_data(x_indices, data["rear_gyro_y"])
+            self.line_rear_gz.set_data(x_indices, data["rear_gyro_z"])
             self.ax3_gyro.set_xlim(x_min, n_samples)
-            
-            rear_accel_arr = np.column_stack([data['rear_accel_x'],
-                                              data['rear_accel_y'],
-                                              data['rear_accel_z']])
+
+            rear_accel_arr = np.column_stack([data["rear_accel_x"], data["rear_accel_y"], data["rear_accel_z"]])
             rear_mag = np.linalg.norm(rear_accel_arr, axis=1)
             self.line_rear_mag.set_data(x_indices, rear_mag)
             self.ax3_mag.set_xlim(x_min, n_samples)
-            
-            # Force Sensor
-            self.line_force_x.set_data(x_indices, data['force_x'])
-            self.line_force_y.set_data(x_indices, data['force_y'])
-            self.line_force_z.set_data(x_indices, data['force_z'])
+
+            # Force Sensor (raw and force_mV only, battery shown in header)
+            self.line_force_raw.set_data(x_indices, data["force_raw"])
+            self.line_force_mv.set_data(x_indices, data["force_mv"])
             self.ax4_force.set_xlim(x_min, n_samples)
-            
+
             # Auto-scale force sensor Y axis based on actual data ranges
-            if len(data['force_x']) > 0 or len(data['force_y']) > 0 or len(data['force_z']) > 0:
-                all_force_values = data['force_x'] + data['force_y'] + data['force_z']
+            if len(data["force_raw"]) > 0 or len(data["force_mv"]) > 0:
+                all_force_values = data["force_raw"] + data["force_mv"]
                 if all_force_values:
                     force_min = min(all_force_values)
                     force_max = max(all_force_values)
                     margin = (force_max - force_min) * 0.1 if (force_max - force_min) > 0 else 100
                     self.ax4_force.set_ylim(force_min - margin, force_max + margin)
                     self.ax4_force.set_autoscale_on(False)
-            
+
             # Update AI Character Recognition display
             if self.char_recognition.model:
                 # Model is loaded
                 if self.char_recognition.is_writing:
-                    buffer_len = len(self.char_recognition.writing_buffer['top_accel_x'])
+                    buffer_len = len(self.char_recognition.writing_buffer["top_accel_x"])
                     ai_text = f"✏️ Writing...\n\n📊 Collecting Data\n({buffer_len} samples)"
                 elif self.char_recognition.recognized_char:
                     # Show last recognized character (persistent)
@@ -668,38 +623,50 @@ class SensorDashboardGUI:
             else:
                 # No model loaded
                 if self.char_recognition.is_writing:
-                    buffer_len = len(self.char_recognition.writing_buffer['top_accel_x'])
+                    buffer_len = len(self.char_recognition.writing_buffer["top_accel_x"])
                     ai_text = f"Collecting...\n\n({buffer_len} samples)\n\nNo Model\nto Recognize"
                 else:
                     ai_text = "No Model\n\nTrain first using:\ntrain_character_\nmodel.py"
             self.ai_recognition_canvas.itemconfig(self.ai_recognition_text, text=ai_text)
-            
+
             # Update pen action insights box
             action_text = self.action_detector.get_display_text()
             self.action_canvas.itemconfig(self.action_text, text=action_text)
-            
+
             # Update status
             elapsed = (datetime.now() - self.start_time).total_seconds()
             rate = self.sample_count / elapsed if elapsed > 0 else 0
-            
+
             self.sample_label.config(text=f"Samples: {self.sample_count}")
             self.rate_label.config(text=f"Rate: {rate:.1f} Hz")
-            
+
+            # Update battery display in header
+            if n_samples > 0:
+                latest_battery_mv = data["battery_mv"][-1]
+                battery_pct = self.battery_converter.voltage_to_percentage(latest_battery_mv)
+                status, color, _ = self.battery_converter.get_battery_health_status(latest_battery_mv)
+                battery_icon = BatteryConverter.get_battery_icon(battery_pct)
+                self.battery_label.config(text=f"{battery_icon} {battery_pct:.0f}%", foreground=color)
+
             # Stats panel - use snapshot data
             latest_vals = {
-                'top_ax': data['top_accel_x'][-1] if n_samples > 0 else 0,
-                'top_ay': data['top_accel_y'][-1] if n_samples > 0 else 0,
-                'top_az': data['top_accel_z'][-1] if n_samples > 0 else 0,
-                'top_mag': top_mag[-1] if len(top_mag) > 0 else 0,
-                'rear_ax': data['rear_accel_x'][-1] if n_samples > 0 else 0,
-                'rear_ay': data['rear_accel_y'][-1] if n_samples > 0 else 0,
-                'rear_az': data['rear_accel_z'][-1] if n_samples > 0 else 0,
-                'rear_mag': rear_mag[-1] if len(rear_mag) > 0 else 0,
-                'force_x': data['force_x'][-1] if n_samples > 0 else 0,
-                'force_y': data['force_y'][-1] if n_samples > 0 else 0,
-                'force_z': data['force_z'][-1] if n_samples > 0 else 0,
+                "top_ax": data["top_accel_x"][-1] if n_samples > 0 else 0,
+                "top_ay": data["top_accel_y"][-1] if n_samples > 0 else 0,
+                "top_az": data["top_accel_z"][-1] if n_samples > 0 else 0,
+                "top_mag": top_mag[-1] if len(top_mag) > 0 else 0,
+                "rear_ax": data["rear_accel_x"][-1] if n_samples > 0 else 0,
+                "rear_ay": data["rear_accel_y"][-1] if n_samples > 0 else 0,
+                "rear_az": data["rear_accel_z"][-1] if n_samples > 0 else 0,
+                "rear_mag": rear_mag[-1] if len(rear_mag) > 0 else 0,
+                "force_raw": data["force_raw"][-1] if n_samples > 0 else 0,
+                "battery_mv": data["battery_mv"][-1] if n_samples > 0 else 0,
+                "force_mv": data["force_mv"][-1] if n_samples > 0 else 0,
             }
-            
+
+            # Calculate battery percentage for stats panel
+            battery_pct = self.battery_converter.voltage_to_percentage(latest_vals["battery_mv"])
+            status, color, _ = self.battery_converter.get_battery_health_status(latest_vals["battery_mv"])
+
             stats = f"""SYSTEM STATUS
 ━━━━━━━━━━━━━━━
 Samples: {self.sample_count}
@@ -720,24 +687,26 @@ Rear Accel:
   Z: {latest_vals['rear_az']:.0f}
   Mag: {latest_vals['rear_mag']:.0f}
 
-Force:
-  X: {latest_vals['force_x']:.0f}
-  Y: {latest_vals['force_y']:.0f}
-  Z: {latest_vals['force_z']:.0f}
+Force & Power:
+  Force Raw: {latest_vals['force_raw']:.0f}
+  Battery: {latest_vals['battery_mv']:.0f}mV
+  Battery %: {battery_pct:.0f}%
+  Status: {status}
+  Force mV: {latest_vals['force_mv']:.0f}mV
 
 Status: ✓ RUNNING
 """
             self.stats_text.set_text(stats)
-            
+
             try:
                 self.canvas.draw_idle()
                 self.canvas.flush_events()  # Process GUI events
             except:
                 pass
-        
+
         # Schedule next update
         self.root.after(100, self.update_plot)
-    
+
     def on_closing(self):
         """Handle window closing"""
         self._disconnect()

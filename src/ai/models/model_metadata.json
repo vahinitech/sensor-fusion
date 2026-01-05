@@ -1,24 +1,30 @@
 {
-  "model_type": "CNN+BiLSTM (Fast Training)",
-  "training_mode": "Fast (optimized for speed)",
+  "model_type": "CNN+BiLSTM",
   "purpose": "Handwritten uppercase letter recognition (A-Z)",
   "input_shape": [
     512,
     13
   ],
+  "output_classes": 26,
+  "timesteps": 512,
+  "n_features": 13,
   "num_classes": 26,
+  "sampling_rate": 104,
+  "dataset": "OnHW uppercase (Fraunhofer Institute)",
   "training_samples": 10387,
-  "epochs": 15,
-  "batch_size": 128,
-  "workers": 9,
-  "optimizations": [
-    "Larger batch size (128 vs 64)",
-    "Fewer epochs with early stopping (15 vs 30)",
-    "Mixed precision (if available)",
-    "Maximum CPU utilization",
-    "XLA compilation enabled"
-  ],
-  "training_time_minutes": 6.513369833333333,
-  "training_date": "2026-01-04T01:27:35.282852",
-  "model_location": "src/ai/models/character_model.h5"
+  "validation_samples": 1155,
+  "test_samples": 4108,
+  "epochs_trained": 30,
+  "batch_size": 64,
+  "optimizer": "Adam (lr=0.001)",
+  "loss_function": "categorical_crossentropy",
+  "parallelization": {
+    "epochs": "Sequential (by design)",
+    "batches": "Parallel (7 workers)",
+    "data_loading": "Multi-worker preprocessing"
+  },
+  "training_time_minutes": 17.719863750000002,
+  "training_date": "2026-01-04T08:07:38.213522",
+  "model_location": "src/ai/models/character_model.h5",
+  "gui_integration": "Automatic - place in src/ai/models/"
 }

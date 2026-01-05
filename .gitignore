@@ -34,17 +34,38 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+*.png.bak
+layout_verification.png
 
 # Project specific
 *.csv.bak
 *.h5.bak
-data/*.csv
-data/test_data.csv
-data/**/*.npy           # Exclude NPY training files
-data/**/X_*.npy         # Exclude training data
-data/**/y_*.npy         # Exclude labels
-data/onhw-chars_*/      # Exclude entire OnHW training dataset (large ~2GB)
-data/onhw-chars_*/**    # Exclude all OnHW dataset subdirectories
-data/*.zip              # Exclude zip archives
+
+# Data files - IGNORE ALL except config.json
+data/
+!data/.gitkeep
+!data/config.json
+
+# Configuration
 .env
 *.log
+
+# Build & Artifacts
+dist/
+build/
+*.whl
+htmlcov/
+coverage.xml
+.coverage
+
+# Model weights
+*.h5
+*.pb
+*.onnx
+models/checkpoints/
+
+# Temporary files
+*.tmp
+*.temp
+.pytest_cache/
+.hypothesis/
